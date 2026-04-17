@@ -1,0 +1,14 @@
+{
+  "home": {
+    "address": "123 Main St, Queens, NY 11040",
+    "lat": 40.7432,
+    "lon": -73.6812,
+    "label": "Home"
+  },
+  "work": {
+    "address": "250 Broadway, New York, NY 10007",
+    "lat": 40.7131,
+    "lon": -74.0065,
+    "label": "Office"
+  }
+}

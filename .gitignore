@@ -1,0 +1,13 @@
+# Runtime data (GTFS cache, saved locations)
+data/*
+!data/locations.json.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# OS junk
+.DS_Store
+Thumbs.db
