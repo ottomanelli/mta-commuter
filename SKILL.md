@@ -124,17 +124,20 @@ After setup, when the user mentions a saved location, consider whether they migh
 - Note which branches/lines serve each option
 - If there are relevant service alerts, check alerts and mention disruptions
 
-### Following a train (track and delays)
+### Following a train (track, delays, departure)
 
-To follow one LIRR or Metro-North train until it leaves, use `scripts/watch_train.py`. It
-watches the station's departure board in the background and reports each change: the
-track being posted (or changed), the delay changing by two minutes or more, the train
-arriving, a cancellation, and its departure, which ends the watch.
+To follow one LIRR or Metro-North train until it leaves, use `scripts/watch_train.py`.
+It reports each change: the track being posted (or changed), the delay changing by two
+minutes or more, the train arriving, a cancellation, and its departure, which ends the
+watch. It needs no setup: OpenClaw's scheduler runs it every 20 seconds and delivers
+what it has to say to the chat, then the job removes itself.
 
 ```bash
 python3 scripts/watch_train.py start --train 1582 --station NYK \
-  --label "5:22 PM to Huntington" --arrives "6:14 PM"
-python3 scripts/watch_train.py start --system mnr --train 873 --station GCT --label "5:43 PM to White Plains"
+  --label "5:22 PM to Huntington" --arrives "6:14 PM" \
+  --channel telegram --target <chat id> [--thread-id <topic id>]
+python3 scripts/watch_train.py start --system mnr --train 873 --station GCT \
+  --label "5:43 PM to White Plains" --channel telegram --target <chat id>
 python3 scripts/watch_train.py status          # what is being followed, with track and delay
 python3 scripts/watch_train.py stop            # everything, or --train 1582
 ```
@@ -142,55 +145,47 @@ python3 scripts/watch_train.py stop            # everything, or --train 1582
 - `--station` is the station the user is leaving from (its board is the one watched).
 - `--label` is how the train is named in messages; use its departure time and destination.
 - `--arrives` (optional) is its arrival time at the user's stop; it is added to the track message.
+- `--channel`, `--target`, `--thread-id` say where to deliver: the channel, chat id and
+  (for a forum topic) topic id of the conversation you are in. If you do not know the
+  chat id, give only `--channel` and OpenClaw delivers to the most recent chat on it.
 - `--until track` ends the watch once the track is posted, for someone who only wants that.
 
-**Where the messages go.** Each event is handed to the "on event" commands in
-`data/watch.json` (the event as JSON on standard input; `{message}` in the arguments is
-replaced by a sentence ready to send):
-
-```json
-{"on_event": [["openclaw", "message", "send", "--channel", "telegram",
-               "--target", "<chat id>", "--message", "{message}"]]}
-```
-
-If `data/watch.json` exists, just start the watch: it is already set up, and may do
-more than send a message (update a display, for example). If it does not exist, pass the
-command for the chat you are talking in with `--on-event`:
-
-```bash
-python3 scripts/watch_train.py start --train 1582 --station NYK --label "5:22 PM to Huntington" \
-  --on-event 'openclaw message send --channel telegram --target <chat id> --message {message}'
-```
-
-#### Workflow for "follow my train" / "tell me the track" / "remind me about train X"
+Workflow for "follow my train" / "tell me the track" / "remind me about train X":
 
 1. Look up the train to confirm it exists and get its departure and arrival times. The
-   train number is the last part of `trip_id` in the `--json` output.
+   train number is the third part of `trip_id` in the `--json` output
+   (`GO203_26_1516` and `GO203_26_1516_1` are both train `1516`; do not take the last part).
 2. Run `watch_train.py status --json`. If that train is already being followed, say so
    and give its track and delay; do not start it again.
-3. Otherwise `watch_train.py start` with the number, the departure station, a label and
-   the arrival time.
+3. Otherwise `watch_train.py start` as above.
 4. Confirm in one sentence: the train, its expected track if `status` shows one, and
    that they will be told when the track posts or the delay changes.
 
 For "are you watching my train?" or "what's the track?", use `status`. For "stop
 following", use `stop`.
 
-#### One-off track check with cron (still supported)
+If the user has a `data/watch.json`, its commands receive every event instead of the
+chat (see the README: it can drive a display or another service). Leave that file as it
+is, and start the watch the same way; `--channel` and `--target` are then not needed.
 
-`scripts/check_track.py` answers once: it prints a line when the track is assigned and
-exits non-zero until then, so it can be polled with `openclaw cron`:
+#### Fallback: one-off track check with cron
+
+If `watch_train.py start` answers with an error, use `scripts/check_track.py`, which
+answers once: it prints a line when the track is assigned and exits non-zero until then.
 
 ```bash
 openclaw cron add --every 20s \
   --command "cd skills/mta && python3 scripts/check_track.py --train 1582 --station NYK" \
   --channel telegram --delete-after-run \
   --name "Track watch: 5:22 PM to Huntington"
+
+openclaw cron add --every 20s \
+  --command "cd skills/mta && python3 scripts/check_track.py --system mnr --train 873 --station GCT" \
+  --channel telegram --delete-after-run \
+  --name "Track watch: 5:43 PM to White Plains"
 ```
 
-Prefer `watch_train.py` for new requests; it also reports delays and stops by itself.
-
-**Note:** `watch_train.py` and `check_track.py` query undocumented endpoints used by the mylirr.org and mymnr.org web apps (`backend-unified.mylirr.org` / `backend-unified.mymnr.org`). These are not official public APIs and may change or become unavailable without notice. The rest of the skill uses the official MTA GTFS feeds and is not affected.
+**Note:** `check_track.py` and `watch_train.py` query undocumented endpoints used by the mylirr.org and mymnr.org web apps (`backend-unified.mylirr.org` / `backend-unified.mymnr.org`). These are not official public APIs and may change or become unavailable without notice. The rest of the skill uses the official MTA GTFS feeds and is not affected.
 
 ### Limitations
 1. **No subway real-time arrivals** -- subway frequency is estimated from schedule headways ("every ~8 min"), not live countdown data.

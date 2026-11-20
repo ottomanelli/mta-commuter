@@ -153,6 +153,90 @@ $ python3 scripts/mta.py lirr NYK NHP --time 17:00 --json --count 1
 ]
 ```
 
+
+## Following a train, and sending its news anywhere
+
+`scripts/watch_train.py` follows one LIRR or Metro-North train until it leaves and
+reports each change: track posted or changed, delay changed, arriving, canceled, departed.
+
+```bash
+python3 scripts/watch_train.py start --train 1582 --station NYK --label "5:22 PM to Huntington" \
+  --channel telegram --target <chat id>
+python3 scripts/watch_train.py status
+python3 scripts/watch_train.py stop
+```
+
+There is nothing to set up. `start` adds a job to OpenClaw's scheduler that runs the
+watcher every 20 seconds; each run looks at the board for a few seconds, prints anything
+new for the scheduler to deliver to the chat, and exits. What it has seen and said is
+kept in `data/.watch/` between runs, and the job removes itself once the train has left.
+Nothing is left running, so it survives restarts and works wherever OpenClaw does.
+`check_track.py` with `openclaw cron` (the one-off track alert) still works as before.
+
+### Hooks
+
+The news is not tied to a chat. `data/watch.json` holds a list of commands, and every
+event is handed to each of them, so you can connect a followed train to anything: a
+phone notification service, a home display, a webhook, your own relay.
+
+```json
+{
+  "on_event": [
+    ["openclaw", "message", "send", "--channel", "telegram", "--target", "<chat id>", "--message", "{message}"],
+    ["python3", "/path/to/my_hook.py"]
+  ],
+  "fast_seconds": 5
+}
+```
+
+Each command is run once per event, without a shell. It receives:
+
+- **the event as JSON on standard input** (below);
+- **`{message}`** in any argument replaced by a sentence ready to show a person. A
+  command that uses `{message}` is skipped for events that have nothing to say.
+
+| Field | Meaning |
+|---|---|
+| `event` | `started`, `track`, `delay`, `arriving`, `update`, `canceled`, `departed`, `stopped`, `error` |
+| `message` | A sentence for a person, or `null` (`update`, `departed`, `stopped`) |
+| `train`, `station`, `system` | The train number, the station code whose board is watched, `lirr` or `mnr` |
+| `label` | The name given at `start`, e.g. "5:22 PM to Huntington" |
+| `track`, `sched_track` | The posted track (or `null`), and the one it is scheduled on |
+| `delay_min` | Minutes late, once the board reports it |
+| `leaves` | When it is now expected to leave, as seconds since 1970 |
+| `canceled` | `true` once it is canceled |
+| `at` | When this was noticed, as seconds since 1970 |
+
+What each event means:
+
+- `started`: it is being followed; the message says how it stands.
+- `track`: the track was posted, or changed.
+- `delay`: its lateness changed by two minutes or more.
+- `arriving`: it is pulling in.
+- `update`: its time or lateness moved a little. Nothing to say, but a display can refresh.
+- `canceled`, `departed`, `stopped`, `error`: the watch has ended (canceled; left; stopped
+  by `stop` or after three hours; the board kept refusing requests).
+
+A minimal hook that posts every event to a URL:
+
+```python
+#!/usr/bin/env python3
+import sys, urllib.request
+request = urllib.request.Request("https://example.com/train", data=sys.stdin.buffer.read(),
+                                 headers={"Content-Type": "application/json"})
+urllib.request.urlopen(request, timeout=10)
+```
+
+With hooks set, the scheduler still does the watching and the hooks do the telling
+(nothing is sent to the chat unless a hook sends it). `start --background` instead keeps
+one process running until the train leaves, which allows checks every `fast_seconds`
+without waiting for the next scheduler run; `--on-event '<command>'` adds a hook to one
+such watch.
+
+A failing hook never stops the watch. `fast_seconds` is how often the board is asked in
+the last 20 minutes before a train without a track leaves (default 5, least 2).
+`data/` is not part of the repository, so your `watch.json` stays on your machine.
+
 ## Layout
 
 ```
