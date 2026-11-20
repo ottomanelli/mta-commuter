@@ -166,7 +166,8 @@ skills/mta/
 │   ├── trip.py           # Multi-leg trip planner
 │   ├── geo.py            # Haversine + nearby-station search
 │   ├── locations.py      # Saved locations loader
-│   ├── check_track.py    # Track watch (mylirr/mymnr APIs)
+│   ├── check_track.py    # One-off track check (mylirr/mymnr APIs)
+│   ├── watch_train.py    # Follow a train: track, delays, departure
 │   ├── feeds.json        # GTFS feed URLs per system
 │   └── transfers.json    # Terminal-to-subway transfer map
 ├── tests/                # pytest test suite
