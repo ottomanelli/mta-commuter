@@ -203,7 +203,8 @@ Each command is run once per event, without a shell. It receives:
 | `label` | The name given at `start`, e.g. "5:22 PM to Huntington" |
 | `track`, `sched_track` | The posted track (or `null`), and the one it is scheduled on |
 | `delay_min` | Minutes late, once the board reports it |
-| `leaves` | When it is now expected to leave, as seconds since 1970 |
+| `scheduled` | Its timetable time at this station, as seconds since 1970 |
+| `leaves` | When it is now expected to leave (its timetable time plus its lateness), as seconds since 1970 |
 | `canceled` | `true` once it is canceled |
 | `at` | When this was noticed, as seconds since 1970 |
 

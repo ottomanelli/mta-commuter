@@ -18,10 +18,13 @@ def record(**extra):
     return base
 
 
-def live(track=None, otp=0, minutes=15, sched="19", canceled=False):
+def live(track=None, late=0, minutes=15, sched="19", canceled=False):
+    """The train as the board lists it. `late`: seconds behind its timetable (below zero:
+    ahead of it), None for no live report. The board's own figure, `otp`, counts the
+    other way round: below zero is late."""
     status = {"canceled": canceled}
-    if otp is not None:
-        status["otp"] = otp
+    if late is not None:
+        status["otp"] = -late
     return {"train_num": "1582", "time": NOW + minutes * 60, "track": track, "sched_track": sched, "status": status}
 
 
@@ -37,6 +40,13 @@ class TestStep:
         assert events[0]["message"] == "Following 5:22 PM to Huntington: on time, expected on track 19."
         assert r["delay_min"] == 0 and r["leaves"] == NOW + 15 * 60
 
+    def test_a_through_stations_code_is_not_said_as_a_track(self):
+        # A through station's board schedules trains on codes of its own (G3, R7).
+        r = record()
+        events = step(r, live(sched="G3"), NOW)
+        assert events[0]["message"] == "Following 5:22 PM to Huntington: on time."
+        assert events[0]["sched_track"] == "G3"          # still reported as the board has it
+
     def test_nothing_new_says_nothing(self):
         r = record()
         step(r, live(), NOW)
@@ -45,15 +55,15 @@ class TestStep:
     def test_small_change_is_a_quiet_update(self):
         r = record()
         step(r, live(), NOW)
-        events = step(r, live(otp=60), NOW + 5)
+        events = step(r, live(late=60), NOW + 5)
         assert kinds(events) == ["update"]
         assert events[0]["message"] is None and events[0]["delay_min"] == 1
-        assert step(r, live(otp=60), NOW + 10) == []
+        assert step(r, live(late=60), NOW + 10) == []
 
     def test_messages_start_with_a_capital(self):
         r = record(label="the 5:22 PM to Huntington")
         step(r, live(), NOW)
-        events = step(r, live(otp=300), NOW + 5)
+        events = step(r, live(late=300), NOW + 5)
         assert events[0]["message"].startswith("The 5:22 PM to Huntington is now 5 min late")
 
     def test_track_posted_as_expected(self):
@@ -72,8 +82,8 @@ class TestStep:
 
     def test_arrival_is_left_out_when_late(self):
         r = record(arrives="6:14 PM")
-        step(r, live(otp=300), NOW)
-        events = step(r, live(track="19", otp=300), NOW)
+        step(r, live(late=300), NOW)
+        events = step(r, live(track="19", late=300), NOW)
         assert "arrives" not in events[0]["message"]
 
     def test_arriving_is_said_once(self):
@@ -119,34 +129,56 @@ class TestStep:
     def test_small_delay_change_is_not_news(self):
         r = record()
         step(r, live(), NOW)
-        assert all(event["message"] is None for event in step(r, live(otp=60), NOW + 5))
+        assert all(event["message"] is None for event in step(r, live(late=60), NOW + 5))
 
     def test_delay_change_is_news(self):
         r = record()
         step(r, live(), NOW)
-        events = step(r, live(otp=300), NOW + 5)
+        events = step(r, live(late=300), NOW + 5)
         assert kinds(events) == ["delay"]
         assert "now 5 min late (was 0)" in events[0]["message"]
         assert events[0]["delay_min"] == 5
 
     def test_back_on_time(self):
         r = record()
-        step(r, live(otp=300), NOW)
-        events = step(r, live(otp=0), NOW + 5)
+        step(r, live(late=300), NOW)
+        events = step(r, live(late=0), NOW + 5)
         assert events[0]["message"].startswith("5:22 PM to Huntington is back on time")
 
     def test_started_late(self):
         r = record()
-        events = step(r, live(otp=240), NOW)
+        events = step(r, live(late=240), NOW)
         assert "4 min late" in events[0]["message"]
         assert r["leaves"] == NOW + 15 * 60 + 240
 
+    def test_late_is_below_zero_on_the_board(self):
+        # As the New Hyde Park board had the 8:13 on 2026-11-24: due at its timetable
+        # time, 369 seconds behind. Read the other way round it was "on time".
+        r = record()
+        board = {"train_num": "1582", "time": NOW + 300, "track": "3", "sched_track": "G3",
+                 "status": {"canceled": False, "otp": -369, "otp_location": "NA1"}}
+        events = step(r, board, NOW)
+        assert "6 min late" in events[0]["message"] and "on time" not in events[0]["message"]
+        assert events[0]["delay_min"] == 6 and events[0]["leaves"] == NOW + 300 + 369
+        assert events[0]["scheduled"] == NOW + 300       # the timetable's time, for "was 8:13"
+        # ... and it has not left three minutes after its timetable time
+        assert kinds(step(r, board, NOW + 300 + 200)) == []
+        assert kinds(step(r, board, NOW + 300 + 369 + watch_train.GONE_SECONDS + 1)) == ["departed"]
+
+    def test_ahead_of_time_is_on_time(self):
+        r = record()
+        board = {"train_num": "1582", "time": NOW + 300, "track": None, "sched_track": "19",
+                 "status": {"canceled": False, "otp": 185}}
+        events = step(r, board, NOW)
+        assert "on time" in events[0]["message"]
+        assert r["delay_min"] == 0 and r["leaves"] == NOW + 300
+
     def test_no_live_report_yet(self):
         r = record()
-        events = step(r, live(otp=None), NOW)
+        events = step(r, live(late=None), NOW)
         assert "no live report on it yet" in events[0]["message"]
         # the first report afterwards is news, even "on time"
-        events = step(r, live(otp=0), NOW + 5)
+        events = step(r, live(late=0), NOW + 5)
         assert kinds(events) == ["delay"] and "is on time" in events[0]["message"]
 
     def test_canceled_ends_the_watch(self):

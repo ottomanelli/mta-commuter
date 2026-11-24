@@ -67,6 +67,17 @@ def find_train(arrivals, train_num):
     return None
 
 
+def seconds_late(train):
+    """How far behind its timetable a train on the arrivals board is running, in seconds
+    (below zero: ahead of it). None if the board has no live report of the train.
+
+    The board's own figure, `status.otp`, counts the other way round: below zero is
+    late. A train due at 8:13 with `otp` -369 is running six minutes late, and its
+    `time` stays the timetable's 8:13."""
+    otp = (train.get("status") or {}).get("otp")
+    return None if otp is None else -otp
+
+
 def main():
     parser = argparse.ArgumentParser(description="Check track assignment for an MTA commuter rail train.")
     parser.add_argument("--train", required=True, help="Train number")
@@ -93,7 +104,7 @@ def main():
         sys.exit(1)
 
     canceled = train.get("status", {}).get("canceled", False)
-    delay_sec = train.get("status", {}).get("otp", 0)
+    delay_sec = seconds_late(train) or 0                 # above zero: late
     sched_track = train.get("sched_track", "")
     station_name = STATION_NAMES.get(args.station, args.station)
 

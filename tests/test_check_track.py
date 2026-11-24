@@ -4,15 +4,16 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from check_track import find_train
+from check_track import find_train, seconds_late
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_track.py"
 
 
 SAMPLE_ARRIVALS = {
     "arrivals": [
+        # two minutes late: the board's `otp` is below zero for a late train
         {"train_num": "1582", "track": "17",
-         "status": {"canceled": False, "otp": 120}},
+         "status": {"canceled": False, "otp": -120}},
         {"train_num": "1584", "track": None,
          "status": {"canceled": False, "otp": 0}},
         {"train_num": 1586, "track": "", "status": {"canceled": True, "otp": 0}},
@@ -39,6 +40,21 @@ class TestFindTrain:
 
     def test_missing_arrivals_key(self):
         assert find_train({}, "1582") is None
+
+
+class TestSecondsLate:
+    def test_below_zero_on_the_board_is_late(self):
+        assert seconds_late({"status": {"otp": -369}}) == 369
+
+    def test_above_zero_on_the_board_is_ahead(self):
+        assert seconds_late({"status": {"otp": 185}}) == -185
+
+    def test_on_time(self):
+        assert seconds_late({"status": {"otp": 0}}) == 0
+
+    def test_no_live_report(self):
+        assert seconds_late({"status": {"canceled": False}}) is None
+        assert seconds_late({}) is None
 
 
 def _run(args, mock_data=None):
@@ -110,6 +126,16 @@ class TestCheckTrackCli:
         assert data["track"] == "17"
         assert data["train"] == "1582"
         assert data["system"] == "lirr"
+        assert data["delay_sec"] == 120                  # above zero: late
+
+    def test_late_train_is_called_late(self):
+        result = _run(["--train", "1582", "--station", "NYK"], mock_data=SAMPLE_ARRIVALS)
+        assert "running 2 min late" in result.stdout
+
+    def test_train_ahead_is_called_early(self):
+        ahead = {"arrivals": [{"train_num": "1582", "track": "17", "status": {"canceled": False, "otp": 185}}]}
+        result = _run(["--train", "1582", "--station", "NYK"], mock_data=ahead)
+        assert "running 3 min early" in result.stdout
 
     def test_requires_train_arg(self):
         result = _run(["--station", "NYK"])

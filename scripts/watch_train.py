@@ -68,7 +68,7 @@ import time
 from pathlib import Path
 from urllib.error import HTTPError
 
-from check_track import STATION_NAMES, fetch_arrivals, find_train
+from check_track import STATION_NAMES, fetch_arrivals, find_train, seconds_late
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 WATCH_DIR = DATA / ".watch"
@@ -133,6 +133,13 @@ def clock(when):
     return f"{moment.tm_hour % 12 or 12}:{moment.tm_min:02d} {'AM' if moment.tm_hour < 12 else 'PM'}"
 
 
+def a_track(code):
+    """The board's "scheduled track" when it is a track to tell a person: a number, as at
+    a terminal. At a through station the board gives a code of its own (G3, R7), which
+    is not a track and is left unsaid."""
+    return str(code) if code and str(code).isdigit() else None
+
+
 def describe(record):
     return record.get("label") or f"train {record['train']} at {STATION_NAMES.get(record['station'], record['station'])}"
 
@@ -157,20 +164,21 @@ def step(record, live, now):
             "event": kind, "message": message, "at": now,
             "train": record["train"], "station": record["station"], "system": record["system"],
             "label": record.get("label"), "track": record.get("track"), "sched_track": record.get("sched_track"),
-            "delay_min": record.get("delay_min"), "leaves": record.get("leaves"), "canceled": record.get("canceled", False),
+            "delay_min": record.get("delay_min"), "scheduled": record.get("scheduled"), "leaves": record.get("leaves"), "canceled": record.get("canceled", False),
         })
 
     if live:
         status = live.get("status") or {}
-        otp = status.get("otp")
+        behind = seconds_late(live)                      # None: the board has no live report of it
         if live.get("time"):
+            # The board's time is the timetable's; a train ahead of it still leaves on time.
             record["scheduled"] = float(live["time"])
-            record["leaves"] = float(live["time"]) + max(0, otp or 0)
+            record["leaves"] = float(live["time"]) + max(0, behind or 0)
         if live.get("sched_track"):
             record["sched_track"] = str(live["sched_track"])
-        if otp is not None:
-            record["delay_min"] = max(0, round(otp / 60))
-        record["live"] = otp is not None
+        if behind is not None:
+            record["delay_min"] = max(0, round(behind / 60))
+        record["live"] = behind is not None
         track = str(live["track"]) if live.get("track") else None
         late = record.get("delay_min") or 0
         track_words = f", track {track}" if track else ""
@@ -191,8 +199,8 @@ def step(record, live, now):
                 how = f"{late} min late" + (f", now leaving about {clock(record['leaves'])}" if record.get("leaves") else "")
             else:
                 how = "on time"
-            expected = (f", expected on track {record['sched_track']}"
-                        if record.get("sched_track") and not track else "")
+            expected = (f", expected on track {a_track(record.get('sched_track'))}"
+                        if a_track(record.get("sched_track")) and not track else "")
             event("started", f"Following {name}: {how}{track_words}{expected}.")
         else:
             if track and track != record.get("track"):
@@ -341,7 +349,7 @@ def watch(path, commands, fast, echo=False, sleep=time.sleep, fetch=fetch_arriva
                 events = [{"event": "stopped", "message": None, "at": time.time(), "train": record["train"],
                            "station": record["station"], "system": record["system"], "label": record.get("label"),
                            "track": record.get("track"), "sched_track": record.get("sched_track"),
-                           "delay_min": record.get("delay_min"), "leaves": record.get("leaves"),
+                           "delay_min": record.get("delay_min"), "scheduled": record.get("scheduled"), "leaves": record.get("leaves"),
                            "canceled": record.get("canceled", False)}]
                 record["events"] = (record.get("events", []) + events)[-KEPT_EVENTS:]
                 write_record(path, record)
@@ -359,7 +367,7 @@ def watch(path, commands, fast, echo=False, sleep=time.sleep, fetch=fetch_arriva
                     event = {"event": "error", "message": f"Stopped following {describe(record)}: the station's board is refusing requests.",
                              "at": time.time(), "train": record["train"], "station": record["station"], "system": record["system"],
                              "label": record.get("label"), "track": record.get("track"), "sched_track": record.get("sched_track"),
-                             "delay_min": record.get("delay_min"), "leaves": record.get("leaves"), "canceled": False}
+                             "delay_min": record.get("delay_min"), "scheduled": record.get("scheduled"), "leaves": record.get("leaves"), "canceled": False}
                     record["events"] = (record.get("events", []) + [event])[-KEPT_EVENTS:]
                     write_record(path, record)
                     deliver(event, commands, echo)
@@ -379,7 +387,7 @@ def watch(path, commands, fast, echo=False, sleep=time.sleep, fetch=fetch_arriva
             events.append({"event": "stopped", "message": None, "at": now, "train": record["train"],
                            "station": record["station"], "system": record["system"], "label": record.get("label"),
                            "track": record.get("track"), "sched_track": record.get("sched_track"),
-                           "delay_min": record.get("delay_min"), "leaves": record.get("leaves"),
+                           "delay_min": record.get("delay_min"), "scheduled": record.get("scheduled"), "leaves": record.get("leaves"),
                            "canceled": record.get("canceled", False)})
         record["checked"] = now
         record["events"] = (record.get("events", []) + events)[-KEPT_EVENTS:]
@@ -423,7 +431,7 @@ def ended_event(record, kind, message=None):
     return {"event": kind, "message": message, "at": time.time(), "train": record["train"],
             "station": record["station"], "system": record["system"], "label": record.get("label"),
             "track": record.get("track"), "sched_track": record.get("sched_track"),
-            "delay_min": record.get("delay_min"), "leaves": record.get("leaves"),
+            "delay_min": record.get("delay_min"), "scheduled": record.get("scheduled"), "leaves": record.get("leaves"),
             "canceled": record.get("canceled", False)}
 
 
@@ -622,7 +630,7 @@ def status(args):
     else:
         for record in found:
             track = f"track {record['track']}" if record.get("track") else (
-                f"no track yet (expected {record['sched_track']})" if record.get("sched_track") else "no track yet")
+                f"no track yet (expected {a_track(record.get('sched_track'))})" if a_track(record.get("sched_track")) else "no track yet")
             late = f", {record['delay_min']} min late" if record.get("delay_min") else ""
             print(f"Following {describe(record)}: {track}{late}.")
     return 0
